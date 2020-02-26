@@ -19,23 +19,25 @@ from bots import Bot
 
 max_time = 10
 
-def enroll_all(emails, enroll_csv_filename):
-    bot = EnrollBot(enroll_csv_filename)
-    bot.enroll_all(emails)
+def enroll_all(account_id, sequence_id, emails):
+    bot = EnrollBot(account_id, sequence_id)
+    bot.enroll_all(emails, sequence_id)
 
 class EnrollBot(Bot):
-    def __init__(self, account_id, enroll_csv_filename):
-        already_enrolled_key = ''.join(['already_enrolled', enroll_csv_filename])
+    def __init__(self, account_id, sequence_id):
+        already_enrolled_key = f'already_enrolled/{sequence_id}'.split('.')[0] + '.json'
+        errors_filename = f'errors/{sequence_id}'.split('.')[0] + '.json'
+        self.account_id = account_id
         super().__init__()
         try:
             self.errors = json.load(open(errors_filename))
         except:
+            print('error getting errors filename')
             self.errors = {}
-        self.already_enrolled_file = s3.Object('hubspot-api', already_enrolled_key) # get remote file with already enrolled
         try:
-            self.already_enrolled = self.already_enrolled_file.get()['Body']
-            self.already_enrolled = json.loads(self.already_enrolled)
-        except FileNotFoundError as e:
+            self.already_enrolled_file = s3.Object('hubspot-api', already_enrolled_key) # get remote file with already enrolled
+            self.already_enrolled = self.already_enrolled_file.get()
+        except:# FileNotFoundError as e:
             print('The already enrolled file must not yet exist')
             self.already_enrolled = []
         print(self.already_enrolled)
@@ -51,7 +53,7 @@ class EnrollBot(Bot):
                 continue
 
             # GO TO SEQUENCE AND SEARCH FOR CONTACT
-            self.driver.get(f'https://app.hubspot.com/sequences/{account_id}/sequence/' + sequence_id) # go to webpage
+            self.driver.get(f'https://app.hubspot.com/sequences/{self.account_id}/sequence/' + sequence_id) # go to webpage
             sleep(1)
             self.click_btn('enroll')
             self.click_btn('enroll a single contact')
@@ -98,14 +100,14 @@ class EnrollBot(Bot):
                     err += ', '.join(missing_tokens)
                     print(err)
                     self.errors.update({contact['Email']: err})
-                    # with open(errors_filename, 'w+', encoding='utf-8') as f:
-                    #     json.dump(self.errors, f, ensure_ascii=False, indent=4)
+                    with open(errors_filename, 'w+', encoding='utf-8') as f:
+                        json.dump(self.errors, f, ensure_ascii=False, indent=4)
                     continue
 
             # BEGIN SEQUENCE
             self.click_btn('start sequence')
 
             # ADD CONTACT TO LIST OF ALREADY ENROLLED
-            self.already_enrolled.append(contact['Email']) # append contact's email to list of already enrolled
-            self.already_enrolled_file.put(Body=json.dumps(self.already_enrolled)) # save to remote file
+            self.already_enrolled.append(contact['Email'])
+            self.already_enrolled_file.put(Body=json.dumps(self.already_enrolled))
             sleep(1)
