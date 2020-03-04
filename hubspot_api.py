@@ -10,6 +10,7 @@ import random
 import re
 import numpy as np
 import boto3
+import pandas as pd
 
 s3 = boto3.resource('s3')
 
@@ -24,23 +25,34 @@ def enroll_all(account_id, sequence_id, emails):
     bot.enroll_all(emails, sequence_id)
 
 class EnrollBot(Bot):
-    def __init__(self, account_id, sequence_id):
+    def __init__(self, account_id, sequence_id, credentials={}):
         already_enrolled_key = f'already_enrolled/{sequence_id}'.split('.')[0] + '.json'
-        errors_filename = f'errors/{sequence_id}'.split('.')[0] + '.json'
+        print('ALREADY ENROLLED KEY:', already_enrolled_key)
+        self.errors_filename = f'errors/{sequence_id}'.split('.')[0] + '.json'
         self.account_id = account_id
+        self.credentials = credentials
         super().__init__()
         try:
-            self.errors = json.load(open(errors_filename))
+            self.errors = json.load(open(self.errors_filename))
         except:
             print('error getting errors filename')
             self.errors = {}
         try:
             self.already_enrolled_file = s3.Object('hubspot-api', already_enrolled_key) # get remote file with already enrolled
-            self.already_enrolled = self.already_enrolled_file.get()
-        except:# FileNotFoundError as e:
+            self.already_enrolled = self.already_enrolled_file.get()['Body'].read()
+            self.already_enrolled = json.loads(self.already_enrolled)
+            print(len(self.already_enrolled), 'contacts already enrolled')
+            print(self.already_enrolled)
+        except FileNotFoundError as e:
             print('The already enrolled file must not yet exist')
             self.already_enrolled = []
         print(self.already_enrolled)
+
+    def login(self):
+        pass
+
+    def search(self, query, _type='search', placeholder=None):
+        self._search(query, _type, placeholder)
 
     def enroll_all(self, contacts, sequence_id):
         for idx, contact in contacts.iterrows():
@@ -55,8 +67,8 @@ class EnrollBot(Bot):
             # GO TO SEQUENCE AND SEARCH FOR CONTACT
             self.driver.get(f'https://app.hubspot.com/sequences/{self.account_id}/sequence/' + sequence_id) # go to webpage
             sleep(1)
-            self.click_btn('enroll')
-            self.click_btn('enroll a single contact')
+            self.click_btn('enroll contacts')
+            # self.click_btn('enroll a single contact')
             self.search(contact['Email'])
             sleep(2)
             self.driver.find_element_by_xpath('//tr[@class="pointer"]').click()
@@ -100,7 +112,7 @@ class EnrollBot(Bot):
                     err += ', '.join(missing_tokens)
                     print(err)
                     self.errors.update({contact['Email']: err})
-                    with open(errors_filename, 'w+', encoding='utf-8') as f:
+                    with open(self.errors_filename, 'w+', encoding='utf-8') as f:
                         json.dump(self.errors, f, ensure_ascii=False, indent=4)
                     continue
 
@@ -111,3 +123,23 @@ class EnrollBot(Bot):
             self.already_enrolled.append(contact['Email'])
             self.already_enrolled_file.put(Body=json.dumps(self.already_enrolled))
             sleep(1)
+
+def read_contacts(filename):
+    f = pd.read_csv(filename)
+    return f
+    #print(f)
+    c =  f['Email'].to_list()
+    return c
+
+def filter_contacts(contacts, schema):
+	print()
+	print('Initial number of contacts:', len(contacts))
+	contacts = contacts.dropna(subset=['Email'])
+	print('Num contacts after dropping null email:', len(contacts))
+	for k, v in schema.items():
+		index = contacts[k].str.contains(v)
+		index = index.fillna(False)
+		# index[index.apply(np.isnan)] = False
+		contacts = contacts[index]
+		print(f'{len(contacts)} remaining after filtering for "{k}"=="{v}"')
+	return contacts
